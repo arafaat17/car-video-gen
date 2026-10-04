@@ -84,9 +84,9 @@ st.markdown("""
 # -----------------------------------------------------------------------------
 # 2. Helper Functions
 # -----------------------------------------------------------------------------
-async def generate_tts_audio(text: str, voice: str, output_path: str):
-    """Generates TTS audio file using edge-tts."""
-    communicate = edge_tts.Communicate(text, voice)
+async def generate_tts_audio(text: str, voice: str, output_path: str, rate: str = "+18%"):
+    """Generates TTS audio file using edge-tts with custom speech rate."""
+    communicate = edge_tts.Communicate(text, voice, rate=rate)
     await communicate.save(output_path)
 
 
@@ -153,8 +153,7 @@ def build_video_reel(presenter_choice, script_text, media_mode, uploaded_images,
         # Step 1: Generate AI Audio
         status_box.text("🎙️ Generating AI voiceover...")
         audio_path = os.path.join(temp_dir, "speech.mp3")
-        asyncio.run(generate_tts_audio(script_text, voice, audio_path))
-
+        asyncio.run(generate_tts_audio(script_text, voice, audio_path, rate="+18%"))
         speech_audio = AudioFileClip(audio_path)
         audio_duration = speech_audio.duration
 
