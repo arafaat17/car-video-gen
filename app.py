@@ -12,6 +12,7 @@ from moviepy.editor import (
     ImageClip,
     VideoFileClip,
     concatenate_videoclips,
+    vfx
 )
 
 # -----------------------------------------------------------------------------
@@ -77,7 +78,7 @@ st.markdown("""
 
 
 # -----------------------------------------------------------------------------
-# 2. Helper Functions for Processing
+# 2. Helper Functions
 # -----------------------------------------------------------------------------
 async def generate_tts_audio(text: str, voice: str, output_path: str):
     """Generates TTS audio file using edge-tts."""
@@ -89,11 +90,7 @@ def process_image_to_916(image_file, target_size=(1080, 1920)):
     """Resizes and pads an image to fit 9:16 aspect ratio (1080x1920)."""
     img = Image.open(image_file).convert("RGB")
     bg = Image.new("RGB", target_size, (15, 15, 15))
-    
-    # Scale image to fit inside target size while keeping aspect ratio
     img.thumbnail(target_size, Image.Resampling.LANCZOS)
-    
-    # Center image
     x = (target_size[0] - img.width) // 2
     y = (target_size[1] - img.height) // 2
     bg.paste(img, (x, y))
@@ -101,11 +98,10 @@ def process_image_to_916(image_file, target_size=(1080, 1920)):
 
 
 def add_caption_to_image(pil_img, text, font_size=38):
-    """Draws a high-contrast caption banner overlay at the bottom of the image."""
+    """Draws caption banner at bottom of image."""
     img_copy = pil_img.copy().convert("RGBA")
     w, h = img_copy.size
 
-    # Draw semi-transparent dark banner box at the bottom
     banner_height = 180
     banner_y = h - banner_height - 120
     
@@ -121,17 +117,15 @@ def add_caption_to_image(pil_img, text, font_size=38):
     img_copy = Image.alpha_composite(img_copy, overlay).convert("RGB")
     draw = ImageDraw.Draw(img_copy)
 
-    # Load default font
     try:
         font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", font_size)
     except Exception:
         font = ImageFont.load_default()
 
-    # Wrap script text to fit banner width
     lines = textwrap.wrap(text, width=32)
     line_y = banner_y + 20
     
-    for line in lines[:3]:  # Display up to 3 lines
+    for line in lines[:3]:
         bbox = draw.textbbox((0, 0), line, font=font)
         text_w = bbox[2] - bbox[0]
         text_x = (w - text_w) // 2
@@ -141,10 +135,9 @@ def add_caption_to_image(pil_img, text, font_size=38):
     return img_copy
 
 
-def build_video_reel(presenter_choice, script_text, uploaded_files, status_box):
-    """Full pipeline: Audio TTS -> Image Padding -> Captions -> Video Stitching."""
+def build_video_reel(presenter_choice, script_text, media_mode, uploaded_images, uploaded_video, status_box):
+    """Full pipeline: Audio TTS -> Media Clip -> Video Stitching."""
     
-    # Configure Presenter Voice & Intro Clip
     if "Neerja" in presenter_choice:
         voice = "en-IN-NeerjaNeural"
         intro_filename = "intro_female.mp4"
@@ -161,40 +154,58 @@ def build_video_reel(presenter_choice, script_text, uploaded_files, status_box):
         speech_audio = AudioFileClip(audio_path)
         audio_duration = speech_audio.duration
 
-        # Step 2: Process Car Images
-        status_box.text("🖼️ Processing images to 9:16 with dynamic captions...")
-        num_images = len(uploaded_files)
-        img_duration = max(2.5, audio_duration / num_images)
+        # Step 2: Handle Media Input
+        if media_mode == "Upload Photos (Slideshow)":
+            status_box.text("🖼️ Processing images & dynamic captions...")
+            num_images = len(uploaded_images)
+            img_duration = max(2.5, audio_duration / num_images)
 
-        img_clips = []
-        for idx, file in enumerate(uploaded_files):
-            # Format image to 9:16 and add caption banner
-            padded_img = process_image_to_916(file)
-            captioned_img = add_caption_to_image(padded_img, script_text)
+            img_clips = []
+            for idx, file in enumerate(uploaded_images):
+                padded_img = process_image_to_916(file)
+                captioned_img = add_caption_to_image(padded_img, script_text)
+                
+                proc_path = os.path.join(temp_dir, f"img_{idx}.png")
+                captioned_img.save(proc_path)
+
+                clip = ImageClip(proc_path).set_duration(img_duration)
+                img_clips.append(clip)
+
+            main_clip = concatenate_videoclips(img_clips, method="compose")
+            main_clip = main_clip.set_audio(speech_audio)
+
+        else:
+            # Video Upload mode
+            status_box.text("📹 Syncing AI voiceover to custom video...")
+            video_input_path = os.path.join(temp_dir, "user_video.mp4")
+            with open(video_input_path, "wb") as f:
+                f.write(uploaded_video.read())
+
+            custom_clip = VideoFileClip(video_input_path)
             
-            proc_path = os.path.join(temp_dir, f"img_{idx}.png")
-            captioned_img.save(proc_path)
+            # Ensure video is 1080x1920 vertical format
+            custom_clip = custom_clip.resize((1080, 1920))
 
-            # Create MoviePy clip for each image
-            clip = ImageClip(proc_path).set_duration(img_duration)
-            img_clips.append(clip)
+            # Match video length to AI voiceover length
+            if custom_clip.duration < audio_duration:
+                custom_clip = custom_clip.fx(vfx.loop, duration=audio_duration)
+            else:
+                custom_clip = custom_clip.subclip(0, audio_duration)
 
-        # Concatenate slideshow and set audio
-        slideshow = concatenate_videoclips(img_clips, method="compose")
-        slideshow = slideshow.set_audio(speech_audio)
+            # Set AI speech audio onto custom video
+            main_clip = custom_clip.set_audio(speech_audio)
 
-        # Step 3: Stitch Presenter Intro + Slideshow
-        status_box.text("🎬 Stitching intro presenter & car slideshow...")
+        # Step 3: Stitch Intro Presenter + Main Clip
+        status_box.text("🎬 Stitching intro presenter & car clip...")
         if os.path.exists(intro_filename):
             intro_clip = VideoFileClip(intro_filename)
-            # Ensure intro is 1080x1920
             intro_clip = intro_clip.resize((1080, 1920))
-            final_clip = concatenate_videoclips([intro_clip, slideshow], method="compose")
+            final_clip = concatenate_videoclips([intro_clip, main_clip], method="compose")
         else:
-            final_clip = slideshow
+            final_clip = main_clip
 
-        # Step 4: Render Final MP4
-        status_box.text("⚡ Rendering final HD reel... (This takes ~15-30 seconds)")
+        # Step 4: Render Final Video
+        status_box.text("⚡ Rendering final HD reel...")
         output_file = os.path.join(temp_dir, "final_reel.mp4")
         
         final_clip.write_videofile(
@@ -207,7 +218,6 @@ def build_video_reel(presenter_choice, script_text, uploaded_files, status_box):
             logger=None
         )
 
-        # Read rendered video into memory
         with open(output_file, "rb") as vf:
             video_bytes = vf.read()
 
@@ -215,9 +225,9 @@ def build_video_reel(presenter_choice, script_text, uploaded_files, status_box):
 
 
 # -----------------------------------------------------------------------------
-# 3. Streamlit Layout & Application UI
+# 3. Application UI
 # -----------------------------------------------------------------------------
-st.markdown('<h1 class="hero-title">🏎️ S Cube Motors</h1>', unsafe_allow_html=True)
+st.markdown('<h1 class="hero-title">🏎️️ S Cube Motors</h1>', unsafe_allow_html=True)
 st.markdown('<p class="hero-subtitle">Automated AI Video Reel Generator</p>', unsafe_allow_html=True)
 
 st.markdown("""
@@ -252,13 +262,33 @@ with col1:
             label_visibility="collapsed"
         )
         
-        st.markdown("**3. Upload Car Photos (JPG/PNG)**")
-        uploaded_images = st.file_uploader(
-            "Upload Images",
-            type=["jpg", "jpeg", "png"],
-            accept_multiple_files=True,
+        st.markdown("**3. Select Media Mode**")
+        media_mode = st.radio(
+            "Media Type",
+            ["Upload Photos (Slideshow)", "Upload Custom Video"],
+            horizontal=True,
             label_visibility="collapsed"
         )
+
+        uploaded_images = None
+        uploaded_video = None
+
+        if media_mode == "Upload Photos (Slideshow)":
+            st.markdown("**Upload Car Photos (JPG/PNG)**")
+            uploaded_images = st.file_uploader(
+                "Upload Images",
+                type=["jpg", "jpeg", "png"],
+                accept_multiple_files=True,
+                label_visibility="collapsed"
+            )
+        else:
+            st.markdown("**Upload Pre-edited Video (MP4/MOV)**")
+            uploaded_video = st.file_uploader(
+                "Upload Video",
+                type=["mp4", "mov", "m4v"],
+                accept_multiple_files=False,
+                label_visibility="collapsed"
+            )
         
         st.markdown("---")
         generate_clicked = st.button("🚀 Generate Studio Reel")
@@ -270,8 +300,10 @@ with col2:
     
     with output_container:
         if generate_clicked:
-            if not uploaded_images:
+            if media_mode == "Upload Photos (Slideshow)" and not uploaded_images:
                 st.warning("⚠️ Please upload at least one car image.")
+            elif media_mode == "Upload Custom Video" and not uploaded_video:
+                st.warning("⚠️ Please upload a custom video file.")
             elif not script_input.strip():
                 st.warning("⚠️ Please enter a car details script.")
             else:
@@ -280,15 +312,19 @@ with col2:
                 
                 try:
                     progress_bar.progress(25)
-                    video_data = build_video_reel(presenter, script_input, uploaded_images, status)
+                    video_data = build_video_reel(
+                        presenter,
+                        script_input,
+                        media_mode,
+                        uploaded_images,
+                        uploaded_video,
+                        status
+                    )
                     progress_bar.progress(100)
                     
                     status.success("🎉 Reel Generated Successfully!")
-                    
-                    # Video player
                     st.video(video_data)
                     
-                    # Download button
                     st.download_button(
                         label="📥 Download Video Reel",
                         data=video_data,
