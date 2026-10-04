@@ -244,15 +244,10 @@ with col1:
         )
         
         st.markdown("**2. Car Details Script** *(Excludes 'Welcome to S Cube Motors')*")
-        default_script = (
-            "Check out this new-shape 2013 Chevrolet Cruze LTZ manual diesel. "
-            "This second-owner sedan features a sunroof, push-button start, "
-            "and Delphi engine with one lakh kilometers. Perfectly maintained "
-            "with no work needed for just 2,200,000 rupees. Message us today!"
-        )
         script_input = st.text_area(
             "Script",
-            value=default_script,
+            value="",
+            placeholder="e.g. Check out this 2013 Chevrolet Cruze LTZ manual diesel. Second owner, sunroof, push-button start, 1,00,000 km. Priced at 2.2 Lakhs. Contact us today!",
             height=130,
             label_visibility="collapsed"
         )
