@@ -1,0 +1,6 @@
+cat <<EOT > requirements.txt
+streamlit
+moviepy
+edge-tts
+Pillow
+EOT
